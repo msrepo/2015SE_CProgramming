@@ -1,0 +1,22 @@
+validity of increment and decrement operator
+777+ ++(a*b-1) invalid
+
+Continuation of Functions
+
+
+Precedence and associativity
+
+Testing and Documentation
+
+
+Precedence and associativity chart
+
+() ++(postfix) --(postfix)			left to right
+
++(unary) -(unary) ++(prefix) --(prefix)		right to left
+
+* / %						left to right
+
++ -(binary)					left to right
+
+= += -= /= *= %=				right to left
