@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Catching Integer Overflows in C</title>
+<link rel="stylesheet" type="text/css" href="Catching%20Integer%20Overflows%20in%20C_files/fefe.css">
+</head><body alink="#000000" bgcolor="#ffffff" link="#ff0000" vlink="#b00000">
+
+<h1>Catching Integer Overflows in C</h1>
+
+<p>
+<b>Update 20150422</b>: clang and gcc 5 have builtins now for this,
+look for __builtin_add_overflow and __builtin_mul_overflow in the
+documentation. That makes these macros obsolete.
+
+</p><p>
+<b>Note</b>: This document and the macros make two important
+assumptions:
+</p><ol>
+  <li>There are 8 bits in a char.  This is not guaranteed by the C
+  standard, and is in fact not true on all platforms, most notably some
+  ancient mainframes.  You could work around this with CHAR_BIT from
+  limits.h, if you really cared.
+  </li><li>The integers use two's complement.  This is also not guaranteed by
+  the C standard, but you will be hard pressed to find a platform where
+  it is not true.
+</li></ol>
+
+<p>
+Integer Overflows are arithmetic errors.  Integers have finite ranges in
+computers, for example a 32-bit unsigned integer goes from 0 to
+0xffffffff.  If you add one to 0xffffffff, you get 0 again.</p><p>
+
+Since the addition operation in the CPU is agnostic to whether the
+integer is signed or unsigned, the same goes for signed integers.  For
+32-bit signed integers, the minimum value is 0x80000000 (-2147483648)
+and the maximum value is 0x7fffffff (2147483647).  Note that there is no
+value than can hold 2147483648, so if you negate
+<tt>(int)0x80000000</tt>, you get <tt>(int)0x80000000</tt> again.  That
+is something to look out for, because it means abs() returns a negative
+value when fed -2147483648.</p><p>
+
+So, if you want to add two integers <tt>a</tt> and <tt>b</tt> (<tt>b
+&gt;= 0</tt>), the easiest way to find out if that overflows is to check
+whether <tt>a+b&lt;a</tt> (or b; some people think you have to check
+against <tt>min(a,b)</tt>, but that is unnecessary).</p><p>
+
+</p><h2>Issue 1: abs(-2147483648) &lt; 0</h2>
+
+<p>
+The abs function returns the argument if it is positive, or the negated
+argument if it is negative.  Unfortunately, -(-2147483648) is still
+-2147483648 (on a 32-bit platform).  So don't rely on abs() on untrusted
+data to return a non-negative number!</p><p>
+
+The same is obviously also true for labs and llabs, but for different
+numbers.</p><p>
+
+This can become a security issue.  I have seen one instance in the
+vasprintf implementation of <a href="http://gcc.gnu.org/onlinedocs/libiberty/">libiberty</a>, which is
+part of gcc, binutils and some other GNU software.  vasprintf walks over
+the format string and tries to estimate how much space it will need to
+hold the formatted result string.  In format strings, there is a
+construct <tt>%.*s</tt> or <tt>%*s</tt>, which means that the actual
+value should be taken from the stack.  The libiberty code did it like
+this:
+
+</p><pre>          if (*p == '*')
+            {
+              ++p;
+              total_width += abs (va_arg (ap, int));
+            }
+</pre>
+
+<p>
+This is actually two issues in one.  The first issue is that
+<tt>total_width</tt> can overflow.  The second issue is the one that is
+interesting in this context: <tt>abs</tt> can return a negative number,
+causing the code to allocate not enough space and thus cause a buffer
+overflow.
+
+</p><h2>Issue 2: adding a positive number to an integer might make it smaller</h2>
+
+<p>
+If you add a positive integer to another positive integer, the result
+is truncated.  Technically, if you add two 32-bit numbers, the result
+has 33 bits.</p><p>
+On the CPU level, if you add two 32-bit integers, the
+lower 32 bits of the result are written to the destination, and the 33rd
+bit is signalled out in some other way, usually in the form of a "carry
+flag".</p><p>
+
+Unfortunately, there is no way to access this carry bit from C
+directly.</p><p>
+
+There are two ways to get around this:
+
+</p><ol>
+<li>Cast the numbers to a bigger integer type, then do the addition
+there, and check if the result is in the right range.
+</li><li>Do the addition normally, then check the result (e.g. <tt>if
+(a+23&lt;23) overflow</tt>).
+</li><li>Check before adding whether the number you add can fit (requires
+knowledge of the maximum value for that data type)
+</li></ol>
+<p>
+Solution 1 does not work in general, because there might not be a bigger
+integer type, and solution 2 does not work, because in the C
+language, when adding a number to a pointer or to a signed
+integer, overflow is undefined.  Unfortunately, gcc as of version 4.1
+abuses this and optimizes away checks that would only be true if there
+was an overflow, in particular checks that check for an overflow.  <a href="http://ptrace.fefe.de/int.c">Here is an example program that
+demonstrates the problem</a>.</p><p>
+
+That leaves us with approach 3.  The general idea is given in <a href="http://c-faq.com/misc/intovf.html">the answer to question 20.6b of
+the C faq</a>.  Unfortunately, the example code has several issues:
+</p><ol>
+<li>It only works for ints.
+</li><li>We cannot easily generalize it, because we would need a function
+that returns INT_MAX for a given type.
+</li><li>It does not catch adding -5 to INT_MIN.
+</li></ol>
+<p>
+
+</p><h3>Finding the minimum and maximum values for a given integer type</h3>
+
+<p>
+For unsigned data types, this is easy.  The minimum value is 0, and the
+maximum value is (type)-1 (-1 cast to the type we want).
+</p><p>
+
+For signed data types, this is not so easy.  For a 32-bit <tt>int</tt>,
+the minimum value is 0x80000000, and the maximum value is 0x7fffffff.
+It might be tempting to calculate one from the other, but we cannot just
+add or subtract one, because that would be the very integer overflow
+that caused the undefined behavior in the first place.  Fortunately, for
+both signed and unsigned arithmetic, the minimum value is the bitwise
+NOT of the maximum value (the <tt>~</tt> operator in C).
+</p><p>
+
+We can construct 0x80000000 as <tt>1 &lt;&lt; (sizeof(type)*8-1)</tt>.
+From that we can construct 0x7fffffff as ~0x80000000.  That gives us min
+and max values for signed and unsigned integers.
+</p><p>
+
+Here are the macros to get the minimum and maximum values for a given
+integer type:
+
+</p><pre>#define __HALF_MAX_SIGNED(type) ((type)1 &lt;&lt; (sizeof(type)*8-2))
+#define __MAX_SIGNED(type) (__HALF_MAX_SIGNED(type) - 1 + __HALF_MAX_SIGNED(type))
+#define __MIN_SIGNED(type) (-1 - __MAX_SIGNED(type))
+
+#define __MIN(type) ((type)-1 &lt; 1?__MIN_SIGNED(type):(type)0)
+#define __MAX(type) ((type)~__MIN(type))
+</pre>
+<p>
+Earlier versions of this document used a left shift of -1 to construct
+the return value of __MIN_SIGNED, but Christian Cornelssen  pointed out
+to me that shifting a negative value is undefined, too.  Therefore the
+new solution jumps through a few more hoops.  Since these calculations
+are performed solely on constants, most compilers (including gcc) will
+calculate them completely at compile time, so do not worry that the new
+statements will be slower.
+</p><p>
+
+</p><h3>Finding out whether we can assign a value to a variable without
+truncation</h3>
+
+<p>
+The next question is whether we can assign a certain value to a
+variable without losing precision.  It is not sufficient if we just
+check for overflow during the addition or subtraction, because someone
+might add 1 to -5 and assign the result to an unsigned int.  Then the
+actual addition does not overflow, but the result still does not fit.
+</p><p>
+
+The first approach would be to do the assignment, and then check whether
+the contents of the destination variable is equal to the value we tried
+to assign to it.  Unfortunately, that is not sufficient.
+</p><p>
+
+Let's say, for example, that you try to assign an int of -23 to an
+unsigned int variable.  You do the assignment, the variable is now
+0xffffffe9, and then you compare <tt>0xffffffe9 == -23</tt>, and the C
+integer promotion rules will convert -23 to unsigned int, and say both
+numbers are the same.  So we also have to compare the signs.  In the
+end, my macro looks like this:
+
+</p><pre>#define assign(dest,src) ({ \
+  typeof(src) __x=(src); \
+  typeof(dest) __y=__x; \
+  (__x==__y &amp;&amp; ((__x&lt;1) == (__y&lt;1))?(void)((dest)=__y),0:1); \
+})
+</pre>
+
+<p>
+typeof is a gcc extension.  It is here so that you can give the macro
+arguments with side effects, like <tt>*ptr++</tt>.  The code then does
+the assignment, checks whether the value didn't change, and then checks
+whether the sign is the same, too.  In the sign comparison, I use
+<tt>&lt; 1</tt> instead of <tt>&lt; 0</tt> because the 0 case doesn't
+matter, and comparing an unsigned int with <tt>&lt; 0</tt> generates a
+gcc warning about a comparison always being true.
+</p><p>
+
+Now we have all we need to do the simple macro, at least a version that
+can add positive numbers:
+
+</p><pre>#define __add_of(c,a,b) ({ \
+  typeof(a) __a=a; \
+  typeof(b) __b=b; \
+  ((__MAX(typeof(c))-(__b) &gt;= (__a))?assign(c,__a+__b):1); \
+})
+</pre>
+
+<h2>Adding and subtracting arbitrary integers</h2>
+
+<p>
+Now that we have a macro that will work for adding positive integers,
+it's easy to generalize this into a macro that will work for negative
+integers, too:
+
+</p><pre>#define add_of(c,a,b) ({ \
+  typeof(a) __a=a; \
+  typeof(b) __b=b; \
+  (__b)&lt;1 ? \
+    ((__MIN(typeof(c))-(__b)&lt;=(__a))?assign(c,__a+__b):1) : \
+    ((__MAX(typeof(c))-(__b)&gt;=(__a))?assign(c,__a+__b):1); \
+})
+</pre>
+
+<p>
+And the subtraction macro works just the same:
+
+</p><pre>#define sub_of(c,a,b) ({ \
+  typeof(a) __a=a; \
+  typeof(b) __b=b; \
+  (__b)&lt;1 ? \
+    ((__MAX(typeof(c))+(__b)&gt;=(__a))?assign(c,__a-__b):1) : \
+    ((__MIN(typeof(c))+(__b)&lt;=(__a))?assign(c,__a-__b):1); \
+})
+</pre>
+
+<h2>Issue 3: Multiplication can overflow, too</h2>
+
+<p>
+The next question is how to multiply integers.  On most platforms, the
+CPU has a multiply instruction that returns a double width integer.  On
+AMD64, for example, there is a <tt>mul</tt> instruction that will
+multiply two 32-bit integers into a 64-bit integer, or it can multiply
+to 64-bit integers into a 128-bit number (split over two registers).
+</p><p>
+
+In C, on the other hand, if you multiply two 32-bit integers, you get a
+32-bit integer again, losing the upper 32 bits of the result.
+Fortunately, if you cast the first integer to a 64-bit number, and then
+multiply it by the other 32-bit integer, gcc is smart enough generate
+exactly the 32x32-&gt;64 instruction we want in the first place.
+</p><p>
+
+</p><h3>Multiplying two 32-bit integers</h3>
+
+<p>
+So, here is a routine that can multiply two 32-bit numbers, returning a
+32-bit number, and checking for overflow:
+
+</p><pre>int umult32(uint32 a,uint32 b,uint32* c) {
+  unsigned long long x=(unsigned long long)a*b;
+  if (x&gt;0xffffffff) return 0;
+  *c=x&amp;0xffffffff;
+  return 1;
+}
+</pre>
+
+<p>
+Multiplying 16-bit values with overflow check works the same way.  Note
+that it is
+
+</p><pre>  (unsigned long long)a*b
+</pre>
+
+<p>
+and not
+
+</p><pre>  (unsigned long long)(a*b)
+</pre>
+
+<p>
+which is a typical mistake of inexperienced C hackers.  In the second
+case, the result is first truncated, and then cast to 64-bit, zeroing
+the upper bits, and the code will never detect an overflow.
+</p><p>
+
+</p><h3>Multiplying two 64-bit integers</h3>
+
+<p>
+But what if we want to multiply two 64-bit numbers and there is no
+128-bit type?  Then we need to do the multiplication by hand.  To do
+that, we split both number in two 32-bit parts.  Let's write
+"<tt>&lt;&lt; 32</tt>" as "<tt>* shift</tt>" to make this easier to
+read.  Basically if we write the first number as <tt>a1 shift +
+a0</tt> and the second number as <tt>b1 shift + b0</tt>, then the
+product is
+
+</p><pre>  (a1 shift + a0) * (b1 shift + b0) ==
+  a1 b1 shift shift + a1 b0 shift + a0 b1 shift + a0 b0
+</pre>
+
+<p>
+The first term is shifted by 64 bits, so if both a1 and b1 are
+nonzero, we have an overflow right there and can abort.
+</p><p>
+
+For the second and third part we do the 32x32-&gt;64 multiplication we
+just used to check for overflow for 32-bit numbers.  This is shifted by
+32 bits, so we have an overflow if the upper half of it is nonzero.
+Since we already know that either a1 or b1 is zero, we can simply
+calculate
+
+</p><pre>  a=(uint64_t)(a1)*b0+(uint64_t)(a0)*b1;
+</pre>
+<p>
+
+At least one half of this term will be zero, so we can't have an
+overflow in the addition.  Then, if <tt>a &gt; 0xffffffff</tt>, we have
+an overflow in the multiplication and can abort.
+</p><p>
+
+If we got this far, the result is
+</p><pre>  (a &lt;&lt; 32) + (uint64_t)(a0)*b0;
+</pre>
+<p>
+We still need to check for overflow in this addition (thanks to Tomi
+Jylhä-Ollila for pointing this out).  Then we can return the result.
+</p></body></html>

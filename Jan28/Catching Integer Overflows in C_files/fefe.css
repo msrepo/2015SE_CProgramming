@@ -1,0 +1,13 @@
+h1 { font-family:Trebuchet MS,Tahoma,Helvetica,Arial }
+h2 { font-family:Trebuchet MS,Tahoma,Helvetica,Arial }
+h3 { font-family:Tahoma,Helvetica,Arial }
+p { font-family:Open Sans,Clear Sans,Verdana,Helvetica,Arial;
+	font-size: 12pt;
+	margin-left:20px; }
+pre { margin-left:20px; }
+ul,ol { font-family:Open Sans,Clear Sans,Verdana,Helvetica,Arial;
+	font-size: 12pt; }
+ul.li { list-style-type:square; }
+p.neu { font-size:13pt; }
+a:hover { background: #ffa }
+th { font-family:Georgia,Tahoma,Helvetica,Arial; font-size: 16pt }
