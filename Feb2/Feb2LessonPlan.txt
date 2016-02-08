@@ -20,3 +20,14 @@ Precedence and associativity chart
 + -(binary)					left to right
 
 = += -= /= *= %=				right to left
+
+
+
+
+
+
+
+
+
+
+

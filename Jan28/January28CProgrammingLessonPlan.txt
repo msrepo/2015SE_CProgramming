@@ -1,0 +1,20 @@
+int x =12,000;
+
+int wordcount;
+int wordcount;
+
+printf formatting options for double type
+
+Maximum and Minimum values of different types
+/usr/include/limits.h
+
+
+Implicit and Explicit Conversion
+
+
+Research Topic
+Single precision floating point format
+double precision floating point format
+http://www3.ntu.edu.sg/home/ehchua/programming/java/datarepresentation.html
+http://www.cs.yale.edu/homes/aspnes/pinewiki/C%282f%29FloatingPoint.html
+http://www.cs.yale.edu/homes/aspnes/pinewiki/C%282f%29Precedence.html

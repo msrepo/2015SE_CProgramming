@@ -1,0 +1,13 @@
+automatic type conversion 
+
+floating point type
+number of significant digits in float and double
+imprecision of floating point numbers
+0.1+.2 not equal to .3
+
+example of functions
+
+example of ++i operator in calculating powers of 2
+
+character variables are like integers
+lower to uppercase conversion
